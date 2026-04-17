@@ -1,0 +1,1 @@
+Opencv_zoo_models taken from: https://github.com/opencv/opencv_zoo
