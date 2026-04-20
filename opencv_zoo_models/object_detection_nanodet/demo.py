@@ -1,5 +1,6 @@
 import numpy as np
 import cv2 as cv
+import os
 import argparse
 
 # Check OpenCV version
@@ -159,8 +160,16 @@ if __name__=='__main__':
 
     else:
         print("Press any key to stop video capture")
-        deviceId = 0
-        cap = cv.VideoCapture(deviceId)
+        cwd = os.getcwd()
+        parent = os.path.abspath(os.path.join(cwd, os.pardir))
+        parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
+        example_path=f"{parent_parent}\examples\example.mp4"
+        print(example_path)
+        cap = cv.VideoCapture(example_path)#(deviceId)
+
+        ##capture camera
+        #deviceId = 0
+        #cap = cv.VideoCapture(deviceId)
 
         while cv.waitKey(1) < 0:
             hasFrame, frame = cap.read()

@@ -2,7 +2,7 @@
 # It is subject to the license terms in the LICENSE file found in the same directory.
 
 import argparse
-
+import os
 import numpy as np
 import cv2 as cv
 
@@ -71,8 +71,16 @@ if __name__ == '__main__':
         target_id=target_id)
 
     # Read from args.input
-    _input = 0 if args.input is None else args.input
-    video = cv.VideoCapture(_input)
+    cwd = os.getcwd()
+    parent = os.path.abspath(os.path.join(cwd, os.pardir))
+    parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
+    example_path=f"{parent_parent}\examples\example.mp4"
+
+    video = cv.VideoCapture(example_path)
+
+    ##capture camera
+    #deviceId = 0
+    #cap = cv.VideoCapture(deviceId)
 
     # Select an object
     has_frame, first_frame = video.read()

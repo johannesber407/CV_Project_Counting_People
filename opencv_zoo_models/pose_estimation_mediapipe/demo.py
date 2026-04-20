@@ -1,6 +1,6 @@
 import sys
 import argparse
-
+import os
 import numpy as np
 import cv2 as cv
 
@@ -217,8 +217,16 @@ if __name__ == '__main__':
             cv.imshow('3D Pose Demo', view_3d)
             cv.waitKey(0)
     else:  # Omit input to call default camera
-        deviceId = 0
-        cap = cv.VideoCapture(deviceId)
+        cwd = os.getcwd()
+        parent = os.path.abspath(os.path.join(cwd, os.pardir))
+        parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
+        example_path=f"{parent_parent}\examples\example.mp4"
+
+        cap = cv.VideoCapture(example_path)
+
+        ##capture camera
+        #deviceId = 0
+        #cap = cv.VideoCapture(deviceId)
 
         tm = cv.TickMeter()
         while cv.waitKey(1) < 0:

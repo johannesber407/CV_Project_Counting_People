@@ -2,6 +2,7 @@ import argparse
 
 import numpy as np
 import cv2 as cv
+import os
 
 # Check OpenCV version
 opencv_python_version = lambda str_version: tuple(map(int, (str_version.split("."))))
@@ -115,8 +116,16 @@ if __name__ == '__main__':
             cv.imshow(args.input, image)
             cv.waitKey(0)
     else: # Omit input to call default camera
-        deviceId = 0
-        cap = cv.VideoCapture(deviceId)
+        cwd = os.getcwd()
+        parent = os.path.abspath(os.path.join(cwd, os.pardir))
+        parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
+        example_path=f"{parent_parent}\examples\example.mp4"
+        print(example_path)
+        cap = cv.VideoCapture(example_path)#(deviceId)
+
+        ##capture camera
+        #deviceId = 0
+        #cap = cv.VideoCapture(deviceId)
 
         tm = cv.TickMeter()
         while cv.waitKey(1) < 0:
