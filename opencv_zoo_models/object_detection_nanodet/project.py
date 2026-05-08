@@ -93,7 +93,7 @@ def unletterbox_points(keypoint, original_image_shape, letterbox_scale):
 
     return ret.astype(np.int32)
 
-def keypoint_extractor(preds, frame, frame_prev, letterbox_scale, fps=None):
+def keypoint_extractor(preds, frame, frame_prev,keypoints_prev, keypoints_descriptors_prev, letterbox_scale, fps=None, th=10):
     frame_copy = frame.copy()
     frame_copy = cv.cvtColor(frame_copy, cv.COLOR_BGR2RGB)
     keypoints = []
@@ -111,7 +111,47 @@ def keypoint_extractor(preds, frame, frame_prev, letterbox_scale, fps=None):
         roi_image=frame_copy[ymin:ymax, xmin:xmax]
         keypoints.append(detector.detect(roi_image))
 
-    return keypoints
+    #mask static keypoints
+    keypoints = mask_static_keypoints(preds, frame, frame_prev, keypoints, letterbox_scale, th=10)
+
+    ##FLATTENED_KEYPOINTS
+    # keypoints_flattend = [kp for sublist in keypoints for kp in sublist]
+    # #keypoints_prev_flattend = [kp for sublist in keypoints_prev for kp in sublist]
+    # keypoints, frame_descriptors = desc_extractor.compute(frame, keypoints_flattend)
+    # if (
+    # frame_descriptors is not None and
+    # keypoints_descriptors_prev is not None and
+    # len(frame_descriptors) > 0 and
+    # len(keypoints_descriptors_prev) > 0):
+    #     matches = matcher.knnMatch(frame_descriptors, keypoints_descriptors_prev, k=2)
+    #     good_matches = extract_good_ratio_matches(matches, max_ratio=0.8)
+    # else:
+    #     good_matches = []
+
+
+    #iterate over combinations of bboxes
+    frame_descriptors = []
+    for keypoint in keypoints:
+        keypoint, frame_descriptors_element = desc_extractor.compute(frame, keypoint)
+        frame_descriptors.append(frame_descriptors_element)
+    
+    good_matches = np.zeros((len(keypoints), len(keypoints_prev)), dtype=object)
+    for i in range(len(keypoints)):
+        for j in range(len(keypoints_prev)):
+            if (
+            frame_descriptors[i] is not None and
+            keypoints_descriptors_prev[j] is not None):
+                
+                matches = matcher.knnMatch(frame_descriptors[i], keypoints_descriptors_prev[j], k=2)
+                good_matches[i, j] = extract_good_ratio_matches(matches, max_ratio=0.8)
+            else:
+                good_matches[i, j] = []
+                print(f"No descriptors to match for bbox {i} and bbox {j}")
+
+        
+    #print(keypoints)
+
+    return keypoints, frame_descriptors, good_matches
 
 def mask_static_keypoints(preds,frame,frame_prev,keypoints,letterbox_scale,th=10):
     ret=frame.copy()
@@ -140,9 +180,31 @@ def mask_static_keypoints(preds,frame,frame_prev,keypoints,letterbox_scale,th=10
         keypoints_masked.append(keypoints_masked_bbox)
         i=i+1
     return keypoints_masked
+
+def extract_good_ratio_matches(matches, max_ratio):
+    """
+    Extracts a set of good matches according to the ratio test.
+
+    :param matches: Input set of matches, the best and the second best match for each putative correspondence.
+    :param max_ratio: Maximum acceptable ratio between the best and the next best match.
+    :return: The set of matches that pass the ratio test.
+    """
+    if len(matches) == 0:
+        return ()
+
+
+    matches_arr = np.asarray(matches)
+    #distances = np.array([m.distance for m in matches_arr.ravel()]).reshape(matches_arr.shape)
+    distances = np.array([[m[0].distance, m[1].distance] for m in matches if len(m) == 2])
+    if distances.size == 0:
+        return ()
+    good = distances[:, 0] < distances[:, 1] * max_ratio
+
+    # Return a tuple of good DMatch objects.
+    return tuple(matches_arr[good, 0])
     
 
-def vis(preds, res_img, keypoints, keypoints_unmasked, letterbox_scale, fps=None):
+def vis(preds, res_img, keypoints, letterbox_scale, fps=None, keypoints_unmasked=None):
     ret = res_img.copy()
 
     # draw FPS
@@ -167,11 +229,11 @@ def vis(preds, res_img, keypoints, keypoints_unmasked, letterbox_scale, fps=None
         label = "{:s}: {:.2f}".format(classes[classid], conf)
         cv.putText(ret, label, (xmin, ymin - 10), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), thickness=2)
 
-        keypoint_bbox_unmasked = keypoints_unmasked[i]
-        for keypoint in keypoint_bbox_unmasked:
-            x, y = keypoint.pt[0]+xmin, keypoint.pt[1]+ymin
-            #print(f"Keypoint coordinates: x={x}, y={y}, shape_img={ret.shape}")
-            cv.circle(ret, (int(x), int(y)), 3, (0, 0, 255), -1)
+        # keypoint_bbox_unmasked = keypoints_unmasked[i]
+        # for keypoint in keypoint_bbox_unmasked:
+        #     x, y = keypoint.pt[0]+xmin, keypoint.pt[1]+ymin
+        #     #print(f"Keypoint coordinates: x={x}, y={y}, shape_img={ret.shape}")
+        #     cv.circle(ret, (int(x), int(y)), 3, (0, 0, 255), -1)
         
 
         keypoint_bbox = keypoints[i]
@@ -181,6 +243,32 @@ def vis(preds, res_img, keypoints, keypoints_unmasked, letterbox_scale, fps=None
             cv.circle(ret, (int(x), int(y)), 3, (255, 0, 0), -1)
 
         i=i+1
+
+    return ret
+
+
+def vis_matches(preds,frame, keypoints, matches, keypoints_prev, letterbox_scale, i, j):
+    print(matches)
+    ret = frame.copy()
+
+    for pred in preds:
+
+
+        bbox = pred[:4]
+
+
+
+        # bbox
+        xmin, ymin, xmax, ymax = unletterbox(bbox, ret.shape[:2], letterbox_scale)
+    
+    for match in matches:
+        img1_idx = match.queryIdx
+        img2_idx = match.trainIdx
+
+        (x1, y1) = keypoints[i][img1_idx].pt[0]+xmin, keypoints[i][img1_idx].pt[1]+ymin
+        (x2, y2) = keypoints_prev[j][img2_idx].pt[0]+xmin, keypoints_prev[j][img2_idx].pt[1]+ymin
+
+        cv.line(ret, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
 
     return ret
 
@@ -261,6 +349,8 @@ if __name__=='__main__':
         #deviceId = 0
         #cap = cv.VideoCapture(deviceId)
         frame_prev=None
+        keypoints_prev=[]
+        keypoints_descriptors_prev=None
 
         while cv.waitKey(1) < 0:
             hasFrame, frame = cap.read()
@@ -282,18 +372,37 @@ if __name__=='__main__':
             tm.stop()
             if preds.shape[0] > 0:
                 preds=preds[preds[:, -1] == 0]
-            print(preds)
-            keypoints = keypoint_extractor(preds, frame, frame_prev, letterbox_scale, fps=tm.getFPS())
-            keypoints_masked=mask_static_keypoints(preds, frame, frame_prev, keypoints, letterbox_scale, th=10 )
-
+            #print(preds)
+            keypoints, keypoint_descriptors, good_matches = keypoint_extractor(preds, frame, frame_prev, keypoints_prev, keypoints_descriptors_prev, letterbox_scale, fps=tm.getFPS())
+            #keypoints_masked=mask_static_keypoints(preds, frame, frame_prev, keypoints, letterbox_scale, th=10 ) 
+           
             
 
+            counts = np.zeros((len(keypoints), len(keypoints_prev)), dtype=int)
+            img = vis(preds, frame, keypoints, letterbox_scale, fps=tm.getFPS())
+
+            for i in range(len(keypoints)):
+                for j in range(len(keypoints_prev)):
+                    #print(f"Good matches between bbox {i} and bbox {j}: {good_matches[i, j]}")
+                    if good_matches[i, j] is None:
+                        counts[i, j] = 0
+                    else:
+                        counts[i, j] = len(good_matches[i, j])
             
-            img = vis(preds, frame, keypoints_masked, keypoints, letterbox_scale, fps=tm.getFPS())
+                    #img = vis_matches(preds,img, keypoints, good_matches[i,j], keypoints_prev, letterbox_scale)
             
-            
+            print(f"Counts of good matches between current and previous frame: \n{counts}")
+            if counts.size > 0:
+                for i in range(len(keypoints)):
+                    prev_bbox_index = np.argmax(counts[i])
+                    print(f"Best matching previous bbox index for current bbox {i}: {prev_bbox_index} with {counts[i, prev_bbox_index]} good matches")
+                    matches_to_prev_bbox = good_matches[i, prev_bbox_index]
+                    img = vis_matches(preds,img, keypoints, matches_to_prev_bbox, keypoints_prev, letterbox_scale, i, prev_bbox_index)  
+
             #print(preds)
             cv.imshow("NanoDet Demo", img)
             frame_prev=frame.copy()
+            keypoints_prev=keypoints
+            keypoints_descriptors_prev=keypoint_descriptors
 
             tm.reset()
