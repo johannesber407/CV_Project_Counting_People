@@ -171,18 +171,13 @@ def vis_matches(box_corner,frame, keypoints, matches, keypoints_prev,  i, j):
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='Nanodet inference using OpenCV an contribution by Sri Siddarth Chakaravarthy part of GSOC_2022')
     parser.add_argument('--input', '-i', type=str,
-                        help='Path to the input image. Omit for using default camera.')
-    parser.add_argument('--model', '-m', type=str,
-                        default='object_detection_nanodet_2022nov.onnx', help="Path to the model")
-
+                        help='Path to the input video. Omit for using default camera.')
     parser.add_argument('--confidence', default=0.35, type=float,
                         help='Class confidence')
-    parser.add_argument('--nms', default=0.6, type=float,
-                        help='Enter nms IOU threshold')
-    parser.add_argument('--save', '-s', action='store_true',
-                        help='Specify to save results. This flag is invalid when using camera.')
-    parser.add_argument('--vis', '-v', action='store_true',
-                        help='Specify to open a window for result visualization. This flag is invalid when using camera.')
+    parser.add_argument('--save', '-s', type=str,
+                        help='Specify path to save results.')
+    parser.add_argument('--orientation', type=str, default='horizontal',
+                        help='Choose orientation for counting: "horizontal" or "vertical".')
     args = parser.parse_args()
 
 
@@ -192,163 +187,164 @@ if __name__=='__main__':
     tm = cv.TickMeter()
     tm.reset()
     #print(args.input)
-    if args.input is not None:
-        print("öhm... nnoch nicht implementiert... ")
-    else:
-        
-        print("Press any key to stop video capture")
-        cwd = os.getcwd()
-        parent = os.path.abspath(os.path.join(cwd, os.pardir))
-        parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
-        orientation="horizontal" #choose orientation for counting: "horizontal" or "vertical"
-        example_path=f"{parent}\examples\example2.mp4"
-        #print(example_path)
-        cap = cv.VideoCapture(example_path)#(deviceId)
-
-        ##capture camera
-        #deviceId = 0
-        #cap = cv.VideoCapture(deviceId)
-        frame_prev=None
-        keypoints_prev=[]
-        keypoints_descriptors_prev=None
-        box_centers_prev=None
-        count_in=0
-        count_out=0
-        #out=cv.VideoWriter('matching.mp4', cv.VideoWriter_fourcc(*'mp4v'), 30, (int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))))
-
-        while cv.waitKey(1) < 0:
-            hasFrame, frame = cap.read()
-            if not hasFrame:
-                print('No frames grabbed!')
-                break
-            if frame_prev is None:
-                frame_prev=frame.copy()
-            
-                 
-
-            #frame = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-            
-
-            
-            # Inference
-            tm.start()
-            preds = model(frame)
-            tm.stop()
-            #if preds.shape[0] > 0:
-            #    preds=preds[preds[:, -1] == 0]
-            #print(preds)
-            box_corners = []
-            box_centers = []
-            confs = []
-            for box in preds[0].boxes:
-                #detect only people
-                cls = int(box.cls[0])
-                if cls == 0:
-                    xmin, ymin, xmax, ymax = map(int, box.xyxy[0])
-                    conf = float(box.conf[0])
-                    box_corners.append((xmin, ymin, xmax, ymax))
-                    box_centers.append(((xmin + xmax) // 2, (ymin + ymax) // 2))
-                    confs.append(conf)
-            keypoints, keypoint_descriptors, good_matches, keypoints_unmasked = keypoint_extractor(box_corners, frame, frame_prev, keypoints_prev, keypoints_descriptors_prev,fps=tm.getFPS())
-            #keypoints_masked=mask_static_keypoints(preds, frame, frame_prev, keypoints, letterbox_scale, th=10 ) 
-           
-            
-
-            counts = np.zeros((len(keypoints), len(keypoints_prev)), dtype=int)
-            img = vis(box_corners, confs, frame, keypoints, keypoints_unmasked=keypoints_unmasked, fps=tm.getFPS())
-
-            for i in range(len(keypoints)):
-                for j in range(len(keypoints_prev)):
-                    #print(f"Good matches between bbox {i} and bbox {j}: {good_matches[i, j]}")
-                    if good_matches[i, j] is None:
-                        counts[i, j] = 0
-                    else:
-                        counts[i, j] = len(good_matches[i, j])
-            
-                    #img = vis_matches(box_corners,img, keypoints, good_matches[i,j], keypoints_prev, i, j)
-            
-            print(f"Counts of good matches between current and previous frame: \n{counts}")
-            matches_to_prev_bbox_arr = []
-
-            if counts.size > 0:
-                  
-                    
     
-                # Hungarian minimizes cost, so maximize matches via negative counts
-                cost_matrix = -counts
+        
+    print("Press any key to stop video capture")
+    cwd = os.getcwd()
+    # parent = os.path.abspath(os.path.join(cwd, os.pardir))
+    # parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
+    # example_path=f"{parent}\examples\example2.mp4"
+    #print(example_path)
+    if args.input is not None:
+        example_path=args.input
+        cap = cv.VideoCapture(example_path)
+    else:
+        cap = cv.VideoCapture(0)  # Use default camera
+    if args.orientation is not None:
+        orientation=args.orientation 
+    else:
+        orientation="horizontal"
 
-                # row_ind = current boxes
-                # col_ind = previous boxes
-                row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    if args.save is not None:
+        out=cv.VideoWriter(args.save, cv.VideoWriter_fourcc(*'mp4v'), 30, (int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))))
 
-                print("\nOptimal assignments:")
+    
 
-                for curr_idx, prev_idx in zip(row_ind, col_ind):
+    ##capture camera
+    #deviceId = 0
+    #cap = cv.VideoCapture(deviceId)
+    confidence_threshold=args.confidence
+    frame_prev=None
+    keypoints_prev=[]
+    keypoints_descriptors_prev=None
+    box_centers_prev=None
+    count_in=0
+    count_out=0
 
-                    match_count = counts[curr_idx, prev_idx]
-
-                    # Optional threshold to reject weak matches
-                    if match_count == 0:
-                        continue
-
-                    print(
-                        f"Current bbox {curr_idx} "
-                        f"matched with previous bbox {prev_idx} "
-                        f"({match_count} matches)"
-                    )
-
-                    matches_to_prev_bbox = good_matches[curr_idx, prev_idx]
-                    matches_to_prev_bbox_arr.append(matches_to_prev_bbox)
-                    
-                    img = vis_matches(box_corners,img, keypoints, matches_to_prev_bbox, keypoints_prev, curr_idx, prev_idx)
-
-            match orientation:
-                case "horizontal":
-                    img=cv.line(img, (0, img.shape[0]//2), (img.shape[1], img.shape[0]//2), (255, 255, 255), thickness=2) #horizontal line for counting
-                    if box_centers_prev is not None:
-                        for i, center in enumerate(box_centers):
-                            for j, prev_center in enumerate(box_centers_prev):
-                                dist = np.linalg.norm(np.array(center) - np.array(prev_center))
-                                if dist < 50:  # distance threshold
-                                    print(f"Box {i} in current frame is close to box {j} in previous frame (distance: {dist:.2f})")
-                                    if center[1] < img.shape[0]//2 and prev_center[1] >= img.shape[0]//2:
-                                        count_in += 1
-                                        print(f"Counted IN: Box {i} moved from below to above the line.")
-                                    elif center[1] >= img.shape[0]//2 and prev_center[1] < img.shape[0]//2:
-                                        count_out += 1
-                                        print(f"Counted OUT: Box {i} moved from above to below the line.")
-            
-                case "vertical":
-                    img=cv.line(img, (img.shape[1]//2, 0), (img.shape[1]//2, img.shape[0]), (255, 255, 255), thickness=2) #vertical line for counting
-                    if box_centers_prev is not None:
-                        for i, center in enumerate(box_centers):
-                            for j, prev_center in enumerate(box_centers_prev):
-                                dist = np.linalg.norm(np.array(center) - np.array(prev_center))
-                                if dist < 50:  # distance threshold
-                                    print(f"Box {i} in current frame is close to box {j} in previous frame (distance: {dist:.2f})")
-                                    if center[0] < img.shape[1]//2 and prev_center[0] >= img.shape[1]//2:
-                                        count_in += 1
-                                        print(f"Counted IN: Box {i} moved from right to left of the line.")
-                                    elif center[0] >= img.shape[1]//2 and prev_center[0] < img.shape[1]//2:
-                                        count_out += 1
-                                        print(f"Counted OUT: Box {i} moved from left to right of the line.")
-                case _:
-                    print("Invalid orientation for counting. Please choose 'horizontal' or 'vertical'.")
-
-            #counting by comparing box centers to previous frame
-            
-            #print(preds)
-            label = f"IN: {count_in}  OUT: {count_out}"
-            img=cv.putText(img, label, (10, 75), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
-
-            cv.imshow("NanoDet Demo", img)
-            
-            
-            #out.write(img)#save video
+    while cv.waitKey(1) < 0:
+        hasFrame, frame = cap.read()
+        if not hasFrame:
+            print('No frames grabbed!')
+            break
+        if frame_prev is None:
             frame_prev=frame.copy()
-            keypoints_prev=keypoints
-            keypoints_descriptors_prev=keypoint_descriptors
-            box_centers_prev=box_centers
 
-            tm.reset()
+        # Inference
+        tm.start()
+        preds = model(frame)
+        tm.stop()
+        #if preds.shape[0] > 0:
+        #    preds=preds[preds[:, -1] == 0]
+        #print(preds)
+        box_corners = []
+        box_centers = []
+        confs = []
+        for box in preds[0].boxes:
+            #detect only people
+            cls = int(box.cls[0])
+            if cls == 0:
+                conf = float(box.conf[0])
+                if conf < confidence_threshold:
+                    continue
+                xmin, ymin, xmax, ymax = map(int, box.xyxy[0])
+                box_corners.append((xmin, ymin, xmax, ymax))
+                box_centers.append(((xmin + xmax) // 2, (ymin + ymax) // 2))
+                confs.append(conf)
+        keypoints, keypoint_descriptors, good_matches, keypoints_unmasked = keypoint_extractor(box_corners, frame, frame_prev, keypoints_prev, keypoints_descriptors_prev,fps=tm.getFPS())
+        counts = np.zeros((len(keypoints), len(keypoints_prev)), dtype=int)
+        img = vis(box_corners, confs, frame, keypoints, keypoints_unmasked=keypoints_unmasked, fps=tm.getFPS())
+
+        for i in range(len(keypoints)):
+            for j in range(len(keypoints_prev)):
+                #print(f"Good matches between bbox {i} and bbox {j}: {good_matches[i, j]}")
+                if good_matches[i, j] is None:
+                    counts[i, j] = 0
+                else:
+                    counts[i, j] = len(good_matches[i, j])
+        
+                #img = vis_matches(box_corners,img, keypoints, good_matches[i,j], keypoints_prev, i, j)
+        
+        print(f"Counts of good matches between current and previous frame: \n{counts}")
+        matches_to_prev_bbox_arr = []
+
+        if counts.size > 0:
+            # Hungarian minimizes cost, so maximize matches via negative counts
+            cost_matrix = -counts
+
+            # row_ind = current boxes
+            # col_ind = previous boxes
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+            print("Optimal assignments:")
+
+            for curr_idx, prev_idx in zip(row_ind, col_ind):
+
+                match_count = counts[curr_idx, prev_idx]
+
+                # Optional threshold to reject weak matches
+                if match_count == 0:
+                    continue
+
+                print(
+                    f"Current bbox {curr_idx} "
+                    f"matched with previous bbox {prev_idx} "
+                    f"({match_count} matches)"
+                )
+
+                matches_to_prev_bbox = good_matches[curr_idx, prev_idx]
+                matches_to_prev_bbox_arr.append(matches_to_prev_bbox)
+                
+                img = vis_matches(box_corners,img, keypoints, matches_to_prev_bbox, keypoints_prev, curr_idx, prev_idx)
+
+        match orientation:
+            case "horizontal":
+                img=cv.line(img, (0, img.shape[0]//2), (img.shape[1], img.shape[0]//2), (255, 255, 255), thickness=2) #horizontal line for counting
+                if box_centers_prev is not None:
+                    for i, center in enumerate(box_centers):
+                        for j, prev_center in enumerate(box_centers_prev):
+                            dist = np.linalg.norm(np.array(center) - np.array(prev_center))
+                            if dist < 50:  # distance threshold
+                                print(f"Box {i} in current frame is close to box {j} in previous frame (distance: {dist:.2f})")
+                                if center[1] < img.shape[0]//2 and prev_center[1] >= img.shape[0]//2:
+                                    count_in += 1
+                                    print(f"Counted IN: Box {i} moved from below to above the line.")
+                                elif center[1] >= img.shape[0]//2 and prev_center[1] < img.shape[0]//2:
+                                    count_out += 1
+                                    print(f"Counted OUT: Box {i} moved from above to below the line.")
+        
+            case "vertical":
+                img=cv.line(img, (img.shape[1]//2, 0), (img.shape[1]//2, img.shape[0]), (255, 255, 255), thickness=2) #vertical line for counting
+                if box_centers_prev is not None:
+                    for i, center in enumerate(box_centers):
+                        for j, prev_center in enumerate(box_centers_prev):
+                            dist = np.linalg.norm(np.array(center) - np.array(prev_center))
+                            if dist < 50:  # distance threshold
+                                print(f"Box {i} in current frame is close to box {j} in previous frame (distance: {dist:.2f})")
+                                if center[0] < img.shape[1]//2 and prev_center[0] >= img.shape[1]//2:
+                                    count_in += 1
+                                    print(f"Counted IN: Box {i} moved from right to left of the line.")
+                                elif center[0] >= img.shape[1]//2 and prev_center[0] < img.shape[1]//2:
+                                    count_out += 1
+                                    print(f"Counted OUT: Box {i} moved from left to right of the line.")
+            case _:
+                print("Invalid orientation for counting. Please choose 'horizontal' or 'vertical'.")
+
+        #counting by comparing box centers to previous frame
+        
+        #print(preds)
+        label = f"IN: {count_in}  OUT: {count_out}"
+        img=cv.putText(img, label, (10, 75), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+
+        cv.imshow("NanoDet Demo", img)
+        
+        
+        if args.save is not None:
+            out.write(img)#save video
+
+        frame_prev=frame.copy()
+        keypoints_prev=keypoints
+        keypoints_descriptors_prev=keypoint_descriptors
+        box_centers_prev=box_centers
+
+        tm.reset()
