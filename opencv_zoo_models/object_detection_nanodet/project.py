@@ -181,7 +181,7 @@ def mask_static_keypoints(preds,frame,frame_prev,keypoints,letterbox_scale,th=10
         i=i+1
     return keypoints_masked
 
-def extract_good_ratio_matches(matches, max_ratio):
+def extract_good_ratio_matches(matches, max_ratio, th=20):
     """
     Extracts a set of good matches according to the ratio test.
 
@@ -198,7 +198,12 @@ def extract_good_ratio_matches(matches, max_ratio):
     distances = np.array([[m[0].distance, m[1].distance] for m in matches if len(m) == 2])
     if distances.size == 0:
         return ()
-    good = distances[:, 0] < distances[:, 1] * max_ratio
+    good_ratio = distances[:, 0] < distances[:, 1] * max_ratio
+
+    good_below_threshold = distances[:, 0] < th
+
+    #print(f"Distances of matches: {distances[:, 0]}")
+    good=good_ratio & good_below_threshold
 
     # Return a tuple of good DMatch objects.
     return tuple(matches_arr[good, 0])
@@ -248,7 +253,7 @@ def vis(preds, res_img, keypoints, letterbox_scale, fps=None, keypoints_unmasked
 
 
 def vis_matches(preds,frame, keypoints, matches, keypoints_prev, letterbox_scale, i, j):
-    print(matches)
+    
     ret = frame.copy()
 
     for pred in preds:
@@ -337,11 +342,12 @@ if __name__=='__main__':
             cv.waitKey(0)
 
     else:
+        
         print("Press any key to stop video capture")
         cwd = os.getcwd()
         parent = os.path.abspath(os.path.join(cwd, os.pardir))
         parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
-        example_path=f"{parent_parent}\examples\example.mp4"
+        example_path=f"{parent_parent}\examples\example2.mp4"
         #print(example_path)
         cap = cv.VideoCapture(example_path)#(deviceId)
 
@@ -351,6 +357,7 @@ if __name__=='__main__':
         frame_prev=None
         keypoints_prev=[]
         keypoints_descriptors_prev=None
+        out=cv.VideoWriter('matching.mp4', cv.VideoWriter_fourcc(*'mp4v'), 30, (int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))))
 
         while cv.waitKey(1) < 0:
             hasFrame, frame = cap.read()
@@ -392,6 +399,7 @@ if __name__=='__main__':
                     #img = vis_matches(preds,img, keypoints, good_matches[i,j], keypoints_prev, letterbox_scale)
             
             print(f"Counts of good matches between current and previous frame: \n{counts}")
+            #TODO Better assignment between boxes (Hungarian algorithm or linear sum assignment) instead of greedy approach
             if counts.size > 0:
                 for i in range(len(keypoints)):
                     prev_bbox_index = np.argmax(counts[i])
@@ -401,6 +409,8 @@ if __name__=='__main__':
 
             #print(preds)
             cv.imshow("NanoDet Demo", img)
+            
+            out.write(img)#save video
             frame_prev=frame.copy()
             keypoints_prev=keypoints
             keypoints_descriptors_prev=keypoint_descriptors

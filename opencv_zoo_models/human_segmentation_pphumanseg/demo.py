@@ -135,7 +135,7 @@ if __name__ == '__main__':
         cwd = os.getcwd()
         parent = os.path.abspath(os.path.join(cwd, os.pardir))
         parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
-        example_path=f"{parent_parent}\examples\example.mp4"
+        example_path=f"{parent_parent}\examples\example2.mp4"
         print(example_path)
         cap = cv.VideoCapture(example_path)#(deviceId)
 
