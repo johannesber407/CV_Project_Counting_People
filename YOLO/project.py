@@ -15,90 +15,9 @@ from ultralytics import YOLO
 
 
 
-# Valid combinations of backends and targets
-backend_target_pairs = [
-    [cv.dnn.DNN_BACKEND_OPENCV, cv.dnn.DNN_TARGET_CPU],
-    [cv.dnn.DNN_BACKEND_CUDA,   cv.dnn.DNN_TARGET_CUDA],
-    [cv.dnn.DNN_BACKEND_CUDA,   cv.dnn.DNN_TARGET_CUDA_FP16],
-    [cv.dnn.DNN_BACKEND_TIMVX,  cv.dnn.DNN_TARGET_NPU],
-    [cv.dnn.DNN_BACKEND_CANN,   cv.dnn.DNN_TARGET_NPU]
-]
-
-classes = ('person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
-           'train', 'truck', 'boat', 'traffic light', 'fire hydrant',
-           'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog',
-           'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe',
-           'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
-           'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat',
-           'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-           'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl',
-           'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot',
-           'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
-           'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
-           'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
-           'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock',
-           'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush')
-
-def letterbox(srcimg, target_size=(416, 416)):
-    img = srcimg.copy()
-
-    top, left, newh, neww = 0, 0, target_size[0], target_size[1]
-    if img.shape[0] != img.shape[1]:
-        hw_scale = img.shape[0] / img.shape[1]
-        if hw_scale > 1:
-            newh, neww = target_size[0], int(target_size[1] / hw_scale)
-            img = cv.resize(img, (neww, newh), interpolation=cv.INTER_AREA)
-            left = int((target_size[1] - neww) * 0.5)
-            img = cv.copyMakeBorder(img, 0, 0, left, target_size[1] - neww - left, cv.BORDER_CONSTANT, value=0)  # add border
-        else:
-            newh, neww = int(target_size[0] * hw_scale), target_size[1]
-            img = cv.resize(img, (neww, newh), interpolation=cv.INTER_AREA)
-            top = int((target_size[0] - newh) * 0.5)
-            img = cv.copyMakeBorder(img, top, target_size[0] - newh - top, 0, 0, cv.BORDER_CONSTANT, value=0)
-    else:
-        img = cv.resize(img, target_size, interpolation=cv.INTER_AREA)
-
-    letterbox_scale = [top, left, newh, neww]
-    return img, letterbox_scale
-
-def unletterbox(bbox, original_image_shape, letterbox_scale):
-    ret = bbox.copy()
-
-    h, w = original_image_shape
-    top, left, newh, neww = letterbox_scale
-
-    if h == w:
-        ratio = h / newh
-        ret = ret * ratio
-        return ret
-
-    ratioh, ratiow = h / newh, w / neww
-    ret[0] = max((ret[0] - left) * ratiow, 0)
-    ret[1] = max((ret[1] - top) * ratioh, 0)
-    ret[2] = min((ret[2] - left) * ratiow, w)
-    ret[3] = min((ret[3] - top) * ratioh, h)
-
-    return ret.astype(np.int32)
-
-def unletterbox_points(keypoint, original_image_shape, letterbox_scale):
-    ret = np.array([keypoint.pt[0], keypoint.pt[1]])
-
-    h, w = original_image_shape
-    top, left, newh, neww = letterbox_scale
-
-    if h == w:
-        ratio = h / newh
-        ret = ret * ratio
-        return ret
-
-    ratioh, ratiow = h / newh, w / neww
-    ret[0] = max((ret[0] - left) * ratiow, 0)
-    ret[1] = max((ret[1] - top) * ratioh, 0)
 
 
-    return ret.astype(np.int32)
-
-def keypoint_extractor(preds, frame, frame_prev,keypoints_prev, keypoints_descriptors_prev, letterbox_scale, fps=None, th=10):
+def keypoint_extractor(box_corners, frame, frame_prev,keypoints_prev, keypoints_descriptors_prev, fps=None, th=10):
     frame_copy = frame.copy()
     frame_copy = cv.cvtColor(frame_copy, cv.COLOR_BGR2RGB)
     keypoints = []
@@ -107,17 +26,14 @@ def keypoint_extractor(preds, frame, frame_prev,keypoints_prev, keypoints_descri
     matcher = cv.BFMatcher_create(desc_extractor.defaultNorm())
 
 
-    for pred in preds:
-        bbox = pred[:4]
-        conf = pred[-2]
-        xmin, ymin, xmax, ymax = unletterbox(bbox, frame_copy.shape[:2], letterbox_scale)
-        xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
-        #print(f"Bbox coordinates: xmin={xmin}, ymin={ymin}, xmax={xmax}, ymax={ymax}")
-        roi_image=frame_copy[ymin:ymax, xmin:xmax]
+    for (xmin, ymin, xmax, ymax) in box_corners:
+        roi_image = frame_copy[ymin:ymax, xmin:xmax]
         keypoints.append(detector.detect(roi_image))
 
+
+
     #mask static keypoints
-    keypoints = mask_static_keypoints(preds, frame, frame_prev, keypoints, letterbox_scale, th=10)
+    keypoints = mask_static_keypoints(box_corners, frame, frame_prev, keypoints,  th=10)
 
     ##FLATTENED_KEYPOINTS
     # keypoints_flattend = [kp for sublist in keypoints for kp in sublist]
@@ -158,7 +74,7 @@ def keypoint_extractor(preds, frame, frame_prev,keypoints_prev, keypoints_descri
 
     return keypoints, frame_descriptors, good_matches
 
-def mask_static_keypoints(preds,frame,frame_prev,keypoints,letterbox_scale,th=10):
+def mask_static_keypoints(box_corners,frame,frame_prev,keypoints,th=10):
     ret=frame.copy()
     frame_diff=cv.absdiff(cv.cvtColor(frame, cv.COLOR_BGR2RGB), cv.cvtColor(frame_prev, cv.COLOR_BGR2RGB))
     mask=frame_diff>th
@@ -168,13 +84,9 @@ def mask_static_keypoints(preds,frame,frame_prev,keypoints,letterbox_scale,th=10
 
     i=0
     keypoints_masked=[]
-    for pred in preds:
+    for (xmin, ymin, xmax, ymax) in box_corners:
         keypoints_masked_bbox=[]
-        bbox = pred[:4]
 
-
-        # bbox
-        xmin, ymin, xmax, ymax = unletterbox(bbox, ret.shape[:2], letterbox_scale)
         keypoint_bbox = keypoints[i]
         for keypoint in keypoint_bbox:
             x, y = keypoint.pt[0]+xmin, keypoint.pt[1]+ymin
@@ -214,7 +126,7 @@ def extract_good_ratio_matches(matches, max_ratio, th=20):
     return tuple(matches_arr[good, 0])
     
 
-def vis(preds, res_img, keypoints, letterbox_scale, fps=None, keypoints_unmasked=None):
+def vis(box_corners, confs,res_img, keypoints, fps=None, keypoints_unmasked=None):
     ret = res_img.copy()
 
     # draw FPS
@@ -224,19 +136,13 @@ def vis(preds, res_img, keypoints, letterbox_scale, fps=None, keypoints_unmasked
 
     # draw bboxes and labels
     i=0
-    for pred in preds:
+    for (xmin, ymin, xmax, ymax) in box_corners:
 
 
-        bbox = pred[:4]
-        conf = pred[-2]
-        classid = pred[-1].astype(np.int32)
-
-        # bbox
-        xmin, ymin, xmax, ymax = unletterbox(bbox, ret.shape[:2], letterbox_scale)
         cv.rectangle(ret, (xmin, ymin), (xmax, ymax), (0, 255, 0), thickness=2)
 
         # label
-        label = "{:s}: {:.2f}".format(classes[classid], conf)
+        label = "person {:.2f}".format(confs[i])
         cv.putText(ret, label, (xmin, ymin - 10), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), thickness=2)
 
         # keypoint_bbox_unmasked = keypoints_unmasked[i]
@@ -257,19 +163,12 @@ def vis(preds, res_img, keypoints, letterbox_scale, fps=None, keypoints_unmasked
     return ret
 
 
-def vis_matches(preds,frame, keypoints, matches, keypoints_prev, letterbox_scale, i, j):
+def vis_matches(box_corner,frame, keypoints, matches, keypoints_prev, letterbox_scale, i, j):
     
     ret = frame.copy()
 
-    for pred in preds:
+    #for (xmin, ymin, xmax, ymax) in box_corner:
 
-
-        bbox = pred[:4]
-
-
-
-        # bbox
-        xmin, ymin, xmax, ymax = unletterbox(bbox, ret.shape[:2], letterbox_scale)
     
     for match in matches:
         img1_idx = match.queryIdx
@@ -291,14 +190,7 @@ if __name__=='__main__':
                         help='Path to the input image. Omit for using default camera.')
     parser.add_argument('--model', '-m', type=str,
                         default='object_detection_nanodet_2022nov.onnx', help="Path to the model")
-    parser.add_argument('--backend_target', '-bt', type=int, default=0,
-                    help='''Choose one of the backend-target pair to run this demo:
-                        {:d}: (default) OpenCV implementation + CPU,
-                        {:d}: CUDA + GPU (CUDA),
-                        {:d}: CUDA + GPU (CUDA FP16),
-                        {:d}: TIM-VX + NPU,
-                        {:d}: CANN + NPU
-                    '''.format(*[x for x in range(len(backend_target_pairs))]))
+
     parser.add_argument('--confidence', default=0.35, type=float,
                         help='Class confidence')
     parser.add_argument('--nms', default=0.6, type=float,
@@ -309,52 +201,22 @@ if __name__=='__main__':
                         help='Specify to open a window for result visualization. This flag is invalid when using camera.')
     args = parser.parse_args()
 
-    backend_id = backend_target_pairs[args.backend_target][0]
-    target_id = backend_target_pairs[args.backend_target][1]
-
 
     model = YOLO("yolo26n.pt")
-    # model = NanoDet(modelPath= args.model,
-    #                 prob_threshold=args.confidence,
-    #                 iou_threshold=args.nms,
-    #                 backend_id=backend_id,
-    #                 target_id=target_id)
+
 
     tm = cv.TickMeter()
     tm.reset()
     #print(args.input)
     if args.input is not None:
-        image = cv.imread(args.input)
-        input_blob = cv.cvtColor(image, cv.COLOR_BGR2RGB)
-
-        # Letterbox transformation
-        input_blob, letterbox_scale = letterbox(input_blob)
-
-        # Inference
-        tm.start()
-        preds = model.infer(input_blob)
-
-        tm.stop()
-        print("Inference time: {:.2f} ms".format(tm.getTimeMilli()))
-
-        img = vis(preds, image, letterbox_scale)
-
-        if args.save:
-            print('Results saved to result.jpg\n')
-            cv.imwrite('result.jpg', img)
-
-        if args.vis:
-            cv.namedWindow(args.input, cv.WINDOW_AUTOSIZE)
-            cv.imshow(args.input, img)
-            cv.waitKey(0)
-
+        print("öhm... nnoch nicht implementiert... ")
     else:
         
         print("Press any key to stop video capture")
         cwd = os.getcwd()
         parent = os.path.abspath(os.path.join(cwd, os.pardir))
         parent_parent=os.path.abspath(os.path.join(parent, os.pardir))
-        example_path=f"{parent_parent}\examples\example2.mp4"
+        example_path=f"{parent}\examples\example2.mp4"
         #print(example_path)
         cap = cv.VideoCapture(example_path)#(deviceId)
 
@@ -364,7 +226,7 @@ if __name__=='__main__':
         frame_prev=None
         keypoints_prev=[]
         keypoints_descriptors_prev=None
-        out=cv.VideoWriter('matching.mp4', cv.VideoWriter_fourcc(*'mp4v'), 30, (int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))))
+        #out=cv.VideoWriter('matching.mp4', cv.VideoWriter_fourcc(*'mp4v'), 30, (int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))))
 
         while cv.waitKey(1) < 0:
             hasFrame, frame = cap.read()
@@ -376,24 +238,34 @@ if __name__=='__main__':
             
                  
 
-            input_blob = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+            #input_blob = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
             
-            input_blob, letterbox_scale = letterbox(input_blob)
+            #input_blob, letterbox_scale = letterbox(input_blob)
             
             # Inference
             tm.start()
-            preds = model.infer(input_blob)
+            preds = model(frame)
             tm.stop()
-            if preds.shape[0] > 0:
-                preds=preds[preds[:, -1] == 0]
+            #if preds.shape[0] > 0:
+            #    preds=preds[preds[:, -1] == 0]
             #print(preds)
-            keypoints, keypoint_descriptors, good_matches = keypoint_extractor(preds, frame, frame_prev, keypoints_prev, keypoints_descriptors_prev, letterbox_scale, fps=tm.getFPS())
+            box_corners = []
+            confs = []
+            for box in preds[0].boxes:
+                #detect only people
+                cls = int(box.cls[0])
+                if cls == 0:
+                    xmin, ymin, xmax, ymax = map(int, box.xyxy[0])
+                    conf = float(box.conf[0])
+                    box_corners.append((xmin, ymin, xmax, ymax))
+                    confs.append(conf)
+            keypoints, keypoint_descriptors, good_matches = keypoint_extractor(box_corners, frame, frame_prev, keypoints_prev, keypoints_descriptors_prev,fps=tm.getFPS())
             #keypoints_masked=mask_static_keypoints(preds, frame, frame_prev, keypoints, letterbox_scale, th=10 ) 
            
             
 
             counts = np.zeros((len(keypoints), len(keypoints_prev)), dtype=int)
-            img = vis(preds, frame, keypoints, letterbox_scale, fps=tm.getFPS())
+            img = vis(box_corners, confs, frame, keypoints, fps=tm.getFPS())
 
             for i in range(len(keypoints)):
                 for j in range(len(keypoints_prev)):
@@ -412,12 +284,12 @@ if __name__=='__main__':
                     prev_bbox_index = np.argmax(counts[i])
                     print(f"Best matching previous bbox index for current bbox {i}: {prev_bbox_index} with {counts[i, prev_bbox_index]} good matches")
                     matches_to_prev_bbox = good_matches[i, prev_bbox_index]
-                    img = vis_matches(preds,img, keypoints, matches_to_prev_bbox, keypoints_prev, letterbox_scale, i, prev_bbox_index)  
+                    #img = vis_matches(preds,img, keypoints, matches_to_prev_bbox, keypoints_prev, i, prev_bbox_index)  
 
             #print(preds)
             cv.imshow("NanoDet Demo", img)
             
-            out.write(img)#save video
+            #out.write(img)#save video
             frame_prev=frame.copy()
             keypoints_prev=keypoints
             keypoints_descriptors_prev=keypoint_descriptors
