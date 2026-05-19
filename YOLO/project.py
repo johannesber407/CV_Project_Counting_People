@@ -162,9 +162,10 @@ def vis(box_corners, confs,res_img, fps=None):
 
         used_tracks.add(bestID)
         Tracks[bestID] = (objectCenter[0], objectCenter[1])
-        
-        kalman = kalman_filters[bestID]
+        measured_x, measured_y = objectCenter
 
+        kalman = kalman_filters[bestID]
+        kalman.correct(np.array([[np.float32(measured_x)], [np.float32(measured_y)]]))
         predicted = kalman.predict()
         predicted_x, predicted_y = int(predicted[0]), int(predicted[1])
         predicted_dx = float(predicted[2])
@@ -179,13 +180,10 @@ def vis(box_corners, confs,res_img, fps=None):
         #img=cv.putText(img, text, (10, 125), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         if objectCenter:
-            measured_x, measured_y = objectCenter
-               
-            kalman.correct(np.array([[np.float32(measured_x)], [np.float32(measured_y)]]))
                 
             cv.circle(ret, (measured_x, measured_y), 6, (0, 255, 0), 2)        
 
-        cv.circle(ret, (predicted_x, predicted_y), 8, (0, 0, 255), 2)
+        cv.circle(ret, (predicted_x, predicted_y), 8, (255, 0, 0), 2)
 
         i=i+1
 
@@ -221,11 +219,11 @@ def extract_Features(xmin, ymin, xmax, ymax, res_img):
 
     roi_gray = cv.cvtColor(roi_image,cv.COLOR_BGR2GRAY)
 
-    keypoints_1 = fast.detect(roi_gray, None)
+    #keypoints_1 = fast.detect(roi_gray, None)
     # descriptors
-    keypoints_1, descriptors_1 = brief.compute(roi_gray, keypoints_1)
+    #keypoints_1, descriptors_1 = brief.compute(roi_gray, keypoints_1)
 
-    #keypoints_1, descriptors_1 = orb.detectAndCompute(roi_gray, None)
+    keypoints_1, descriptors_1 = orb.detectAndCompute(roi_gray, None)
 
     keypoints_image = cv.drawKeypoints(roi_rgb, keypoints_1, outImage=None, color=(23, 255, 10))
 
@@ -235,9 +233,9 @@ def extract_ObjectCenter(xmin, ymin, xmax, ymax, img, keypoint1, descriptor1):
     testimg = img[ymin +2:ymax-2, xmin+2:xmax-2]
     frame_gray = cv.cvtColor(testimg, cv.COLOR_BGR2GRAY)
 
-    #keypoints_2, descriptors_2 = orb.detectAndCompute(frame_gray, None)
-    keypoints_2 = fast.detect(frame_gray, None)
-    keypoints_2, descriptors_2 = brief.compute(frame_gray, keypoints_2)
+    keypoints_2, descriptors_2 = orb.detectAndCompute(frame_gray, None)
+    #keypoints_2 = fast.detect(frame_gray, None)
+    #keypoints_2, descriptors_2 = brief.compute(frame_gray, keypoints_2)
 
     if descriptors_2 is not None and descriptor1 is not None:
         matches = bf.match(descriptor1, descriptors_2)
