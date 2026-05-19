@@ -5,6 +5,8 @@ import cv2 as cv
 import os
 import argparse
 from scipy.optimize import linear_sum_assignment
+import time
+import math
 
 # Check OpenCV version
 opencv_python_version = lambda str_version: tuple(map(int, (str_version.split("."))))
@@ -13,6 +15,19 @@ assert opencv_python_version(cv.__version__) >= opencv_python_version("4.10.0"),
 
 from ultralytics import YOLO
 
+kalman_filters = []
+Tracks = {}
+
+def create_kalman():
+    # Initialize Kalman filter parameters
+    kalman = cv.KalmanFilter(4, 2)   
+ 
+    kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+    kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
+    kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03  # Process noise
+    kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.5  # Measurement noise
+
+    return kalman
 
 def keypoint_extractor(box_corners, frame, frame_prev,keypoints_prev, keypoints_descriptors_prev, fps=None, th=10):
     frame_copy = frame.copy()
@@ -110,7 +125,7 @@ def extract_good_ratio_matches(matches, max_ratio, th=20):
     return tuple(matches_arr[good, 0])
     
 
-def vis(box_corners, confs,res_img, keypoints, fps=None, keypoints_unmasked=None):
+def vis(box_corners, confs,res_img, fps=None):
     ret = res_img.copy()
 
     # draw FPS
@@ -118,29 +133,59 @@ def vis(box_corners, confs,res_img, keypoints, fps=None, keypoints_unmasked=None
         fps_label = "FPS: %.2f" % fps
         cv.putText(ret, fps_label, (10, 25), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+    while len(kalman_filters) < len(box_corners):
+        kalman_filters.append(create_kalman())
+        Tracks[len(kalman_filters) - 1] = (0, 0)
+
     # draw bboxes and labels
+    used_tracks = set()
     i=0
     for (xmin, ymin, xmax, ymax) in box_corners:
 
-
         cv.rectangle(ret, (xmin, ymin), (xmax, ymax), (0, 255, 0), thickness=2)
 
-        # label
-        label = "person {:.2f}".format(confs[i])
+        TEST_keypointimg, TEST_Keypoint1, TEST_Descriptors1 = extract_Features(xmin, ymin, xmax, ymax, ret)
+        objectCenter = extract_ObjectCenter(xmin, ymin, xmax, ymax, ret, TEST_Keypoint1, TEST_Descriptors1)
+
+        bestDistance = float("inf")
+        bestID = 0
+
+        for track_id, (posX, posY) in Tracks.items():
+            if track_id in used_tracks:
+                continue
+
+            dist = math.sqrt((objectCenter[0] - posX)**2 + (objectCenter[1] - posY)**2)
+
+            if dist < bestDistance:
+                bestDistance = dist
+                bestID = track_id
+
+        used_tracks.add(bestID)
+        Tracks[bestID] = (objectCenter[0], objectCenter[1])
+        
+        kalman = kalman_filters[bestID]
+
+        predicted = kalman.predict()
+        predicted_x, predicted_y = int(predicted[0]), int(predicted[1])
+        predicted_dx = float(predicted[2])
+        predicted_dy = float(predicted[3])
+        predicted_V = math.sqrt(predicted_dx**2 + predicted_dy**2)
+            
+        label = "person {:.2f}, ID: {}".format(confs[i], bestID)
         cv.putText(ret, label, (xmin, ymin - 10), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), thickness=2)
 
-        keypoint_bbox_unmasked = keypoints_unmasked[i]
-        for keypoint in keypoint_bbox_unmasked:
-            x, y = keypoint.pt[0]+xmin, keypoint.pt[1]+ymin
-            #print(f"Keypoint coordinates: x={x}, y={y}, shape_img={ret.shape}")
-            cv.circle(ret, (int(x), int(y)), 3, (0, 0, 255), -1)
-        
+        text = f"Velocity: {predicted_V:.0f}"
+        cv.putText(ret, text, (xmin, ymin - 40), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), thickness=1)
+        #img=cv.putText(img, text, (10, 125), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-        keypoint_bbox = keypoints[i]
-        for keypoint in keypoint_bbox:
-            x, y = keypoint.pt[0]+xmin, keypoint.pt[1]+ymin
-            #print(f"Keypoint coordinates: x={x}, y={y}, shape_img={ret.shape}")
-            cv.circle(ret, (int(x), int(y)), 3, (255, 0, 0), -1)
+        if objectCenter:
+            measured_x, measured_y = objectCenter
+               
+            kalman.correct(np.array([[np.float32(measured_x)], [np.float32(measured_y)]]))
+                
+            cv.circle(ret, (measured_x, measured_y), 6, (0, 255, 0), 2)        
+
+        cv.circle(ret, (predicted_x, predicted_y), 8, (0, 0, 255), 2)
 
         i=i+1
 
@@ -165,8 +210,66 @@ def vis_matches(box_corner,frame, keypoints, matches, keypoints_prev,  i, j):
 
     return ret
 
+orb = cv.ORB_create(nfeatures=1000)
+bf = cv.BFMatcher(cv.NORM_HAMMING, crossCheck=True)
+fast = cv.FastFeatureDetector_create(threshold=30)
+brief = cv.xfeatures2d.BriefDescriptorExtractor_create()
 
+def extract_Features(xmin, ymin, xmax, ymax, res_img):
+    roi_image = res_img[ymin +2:ymax-2, xmin+2:xmax-2]
+    roi_rgb = cv.cvtColor(roi_image,cv.COLOR_BGR2RGB)
 
+    roi_gray = cv.cvtColor(roi_image,cv.COLOR_BGR2GRAY)
+
+    keypoints_1 = fast.detect(roi_gray, None)
+    # descriptors
+    keypoints_1, descriptors_1 = brief.compute(roi_gray, keypoints_1)
+
+    #keypoints_1, descriptors_1 = orb.detectAndCompute(roi_gray, None)
+
+    keypoints_image = cv.drawKeypoints(roi_rgb, keypoints_1, outImage=None, color=(23, 255, 10))
+
+    return keypoints_image, keypoints_1, descriptors_1
+
+def extract_ObjectCenter(xmin, ymin, xmax, ymax, img, keypoint1, descriptor1):
+    testimg = img[ymin +2:ymax-2, xmin+2:xmax-2]
+    frame_gray = cv.cvtColor(testimg, cv.COLOR_BGR2GRAY)
+
+    #keypoints_2, descriptors_2 = orb.detectAndCompute(frame_gray, None)
+    keypoints_2 = fast.detect(frame_gray, None)
+    keypoints_2, descriptors_2 = brief.compute(frame_gray, keypoints_2)
+
+    if descriptors_2 is not None and descriptor1 is not None:
+        matches = bf.match(descriptor1, descriptors_2)
+
+        matches = sorted(matches, key=lambda x: x.distance)
+
+        good_matches = matches[:200]
+
+        if good_matches:
+            sum_x = 0
+            sum_y = 0
+            match_count = 0        
+
+            for match in good_matches:
+                # .trainIdx gives keypoint index from current frame 
+                train_idx = match.trainIdx
+                
+                # current frame keypoints coordinates
+                pt2 = keypoints_2[train_idx].pt
+                
+                # Sum the x and y coordinates
+                sum_x += pt2[0]
+                sum_y += pt2[1]
+                match_count += 1
+            
+            # Calculate average of the x and y coordinates
+            avg_x = sum_x / match_count + (xmin + 2)
+            avg_y = sum_y / match_count + (ymin + 2)
+
+        return int(avg_x),int(avg_y)
+
+    return int(0),int(0)
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='Nanodet inference using OpenCV an contribution by Sri Siddarth Chakaravarthy part of GSOC_2022')
@@ -208,11 +311,6 @@ if __name__=='__main__':
     if args.save is not None:
         out=cv.VideoWriter(args.save, cv.VideoWriter_fourcc(*'mp4v'), 30, (int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))))
 
-    
-
-    ##capture camera
-    #deviceId = 0
-    #cap = cv.VideoCapture(deviceId)
     confidence_threshold=args.confidence
     frame_prev=None
     keypoints_prev=[]
@@ -233,9 +331,7 @@ if __name__=='__main__':
         tm.start()
         preds = model(frame)
         tm.stop()
-        #if preds.shape[0] > 0:
-        #    preds=preds[preds[:, -1] == 0]
-        #print(preds)
+
         box_corners = []
         box_centers = []
         confs = []
@@ -250,86 +346,8 @@ if __name__=='__main__':
                 box_corners.append((xmin, ymin, xmax, ymax))
                 box_centers.append(((xmin + xmax) // 2, (ymin + ymax) // 2))
                 confs.append(conf)
-        keypoints, keypoint_descriptors, good_matches, keypoints_unmasked = keypoint_extractor(box_corners, frame, frame_prev, keypoints_prev, keypoints_descriptors_prev,fps=tm.getFPS())
-        counts = np.zeros((len(keypoints), len(keypoints_prev)), dtype=int)
-        img = vis(box_corners, confs, frame, keypoints, keypoints_unmasked=keypoints_unmasked, fps=tm.getFPS())
 
-        for i in range(len(keypoints)):
-            for j in range(len(keypoints_prev)):
-                #print(f"Good matches between bbox {i} and bbox {j}: {good_matches[i, j]}")
-                if good_matches[i, j] is None:
-                    counts[i, j] = 0
-                else:
-                    counts[i, j] = len(good_matches[i, j])
-        
-                #img = vis_matches(box_corners,img, keypoints, good_matches[i,j], keypoints_prev, i, j)
-        
-        print(f"Counts of good matches between current and previous frame: \n{counts}")
-        matches_to_prev_bbox_arr = []
-
-        if counts.size > 0:
-            # Hungarian minimizes cost, so maximize matches via negative counts
-            cost_matrix = -counts
-
-            # row_ind = current boxes
-            # col_ind = previous boxes
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
-
-            print("Optimal assignments:")
-
-            for curr_idx, prev_idx in zip(row_ind, col_ind):
-
-                match_count = counts[curr_idx, prev_idx]
-
-                # Optional threshold to reject weak matches
-                if match_count == 0:
-                    continue
-
-                print(
-                    f"Current bbox {curr_idx} "
-                    f"matched with previous bbox {prev_idx} "
-                    f"({match_count} matches)"
-                )
-
-                matches_to_prev_bbox = good_matches[curr_idx, prev_idx]
-                matches_to_prev_bbox_arr.append(matches_to_prev_bbox)
-                
-                img = vis_matches(box_corners,img, keypoints, matches_to_prev_bbox, keypoints_prev, curr_idx, prev_idx)
-
-        match orientation:
-            case "horizontal":
-                img=cv.line(img, (0, img.shape[0]//2), (img.shape[1], img.shape[0]//2), (255, 255, 255), thickness=2) #horizontal line for counting
-                if box_centers_prev is not None:
-                    for i, center in enumerate(box_centers):
-                        for j, prev_center in enumerate(box_centers_prev):
-                            dist = np.linalg.norm(np.array(center) - np.array(prev_center))
-                            if dist < 50:  # distance threshold
-                                print(f"Box {i} in current frame is close to box {j} in previous frame (distance: {dist:.2f})")
-                                if center[1] < img.shape[0]//2 and prev_center[1] >= img.shape[0]//2:
-                                    count_in += 1
-                                    print(f"Counted IN: Box {i} moved from below to above the line.")
-                                elif center[1] >= img.shape[0]//2 and prev_center[1] < img.shape[0]//2:
-                                    count_out += 1
-                                    print(f"Counted OUT: Box {i} moved from above to below the line.")
-        
-            case "vertical":
-                img=cv.line(img, (img.shape[1]//2, 0), (img.shape[1]//2, img.shape[0]), (255, 255, 255), thickness=2) #vertical line for counting
-                if box_centers_prev is not None:
-                    for i, center in enumerate(box_centers):
-                        for j, prev_center in enumerate(box_centers_prev):
-                            dist = np.linalg.norm(np.array(center) - np.array(prev_center))
-                            if dist < 50:  # distance threshold
-                                print(f"Box {i} in current frame is close to box {j} in previous frame (distance: {dist:.2f})")
-                                if center[0] < img.shape[1]//2 and prev_center[0] >= img.shape[1]//2:
-                                    count_in += 1
-                                    print(f"Counted IN: Box {i} moved from right to left of the line.")
-                                elif center[0] >= img.shape[1]//2 and prev_center[0] < img.shape[1]//2:
-                                    count_out += 1
-                                    print(f"Counted OUT: Box {i} moved from left to right of the line.")
-            case _:
-                print("Invalid orientation for counting. Please choose 'horizontal' or 'vertical'.")
-
-        #counting by comparing box centers to previous frame
+        img = vis(box_corners, confs, frame, fps=tm.getFPS())
         
         #print(preds)
         label = f"IN: {count_in}  OUT: {count_out}"
@@ -343,8 +361,8 @@ if __name__=='__main__':
             out.write(img)#save video
 
         frame_prev=frame.copy()
-        keypoints_prev=keypoints
-        keypoints_descriptors_prev=keypoint_descriptors
+        # keypoints_prev=keypoints
+        # keypoints_descriptors_prev=keypoint_descriptors
         box_centers_prev=box_centers
 
         tm.reset()
