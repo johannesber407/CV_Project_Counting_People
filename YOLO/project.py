@@ -66,6 +66,7 @@ def mask_static_keypoints(box_corners,frame,frame_prev,keypoints,th=10):
     cv.imshow("Frame Difference", frame_diff)  
     cv.imshow("Mask", mask.astype(np.uint8)*255)     
 
+
     i=0
     keypoints_masked=[]
     for (xmin, ymin, xmax, ymax) in box_corners:
@@ -104,7 +105,7 @@ def extract_good_ratio_matches(matches, max_ratio, th=20):
     good_below_threshold = distances[:, 0] < th
 
     #print(f"Distances of matches: {distances[:, 0]}")
-    good=good_ratio & good_below_threshold
+    good=good_ratio #& good_below_threshold
 
     # Return a tuple of good DMatch objects.
     return tuple(matches_arr[good, 0])
@@ -254,6 +255,9 @@ if __name__=='__main__':
         counts = np.zeros((len(keypoints), len(keypoints_prev)), dtype=int)
         img = vis(box_corners, confs, frame, keypoints, keypoints_unmasked=keypoints_unmasked, fps=tm.getFPS())
 
+
+        
+
         for i in range(len(keypoints)):
             for j in range(len(keypoints_prev)):
                 #print(f"Good matches between bbox {i} and bbox {j}: {good_matches[i, j]}")
@@ -336,11 +340,19 @@ if __name__=='__main__':
         img=cv.putText(img, label, (10, 75), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
 
-        cv.imshow("NanoDet Demo", img)
+        cv.imshow("Demo", img)
         
         
         if args.save is not None:
             out.write(img)#save video
+
+        # #show mask diff
+        # frame_diff=cv.absdiff(cv.cvtColor(frame, cv.COLOR_BGR2RGB), cv.cvtColor(frame_prev, cv.COLOR_BGR2RGB))
+        # mask=frame_diff>20
+        # mask=np.any(mask, axis=-1)     
+
+        # out.write(cv.cvtColor(mask.astype(np.uint8)*255, cv.COLOR_GRAY2BGR)) #save mask video
+
 
         frame_prev=frame.copy()
         keypoints_prev=keypoints

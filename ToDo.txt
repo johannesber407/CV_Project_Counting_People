@@ -1,0 +1,12 @@
+- Test different Threshholds for detection, good matches identifier, binary mask
+- improve matching 
+- Understand (maybe improve) hungarian algorithm
+
+- film more examples for testing
+
+- depth estimation - wei 
+- felix - velocity estimation
+
+
+- Make presentation
+- write report
